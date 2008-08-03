@@ -124,36 +124,40 @@ if __name__ == '__main__':
             '''
 
             m = re.compile(regex, re.X).search(arg)
-            if not m:
-                continue
-            else:
-                key, operator, value = m.groups()
 
-                if operator == '=':
-                    # if there are globbing metacharaters, glob-match
-                    if re.search('[*?[]', value):
-                        f = lambda v: fnmatch.fnmatch(v, value) 
-                    # otherwise, perform a strict equality match
-                    else:
-                        f = lambda v: v == value
-                elif operator == '~':
-                    f = lambda v: re.search(value, v)
-                elif operator == '>':
-                    try:
-                        value = float(value)
-                    except ValueError:
-                        parser.error("invalid filter value")
+            # match the name by default
+            while not m:
+                arg = "name=%s" % arg
+                m = re.compile(regex, re.X).search(arg)
 
-                    f = lambda v: float(v) > value
-                elif operator == '<':
-                    try:
-                        value = float(value)
-                    except ValueError:
-                        parser.error("invalid filter value")
+            key, operator, value = m.groups()
 
-                    f = lambda v: float(v) < value
+            # get the proper filtering function
+            if operator == '=':
+                # if there are globbing metacharaters, glob-match
+                if re.search('[*?[]', value):
+                    f = lambda v: fnmatch.fnmatch(v, value) 
+                # otherwise, perform a strict equality match
+                else:
+                    f = lambda v: v == value
+            elif operator == '~':
+                f = lambda v: re.search(value, v)
+            elif operator == '>':
+                try:
+                    value = float(value)
+                except ValueError:
+                    parser.error("invalid filter value")
 
-                filters[key] = f
+                f = lambda v: float(v) > value
+            elif operator == '<':
+                try:
+                    value = float(value)
+                except ValueError:
+                    parser.error("invalid filter value")
+
+                f = lambda v: float(v) < value
+
+            filters[key] = f
 
         for t in g.torrents.itervalues():
             try:
