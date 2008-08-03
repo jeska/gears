@@ -99,8 +99,10 @@ class FilterFalseException(Exception):
 
 if __name__ == '__main__':
     parser = OptionParser(usage="usage: %prog [options] command")
+    parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
     parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
     parser.add_option("-o", "--output_format", dest="output_format", default="%name")
+    parser.add_option("--rs", dest="record_separator", default="\n")
 
     (options, args) = parser.parse_args()
 
@@ -187,6 +189,7 @@ if __name__ == '__main__':
 
         expression_re = re.compile(r'@\{([^}]+)\}')
 
+        lines = []
         for t in g.torrents.itervalues():
             try:
                 for k, filter in filters.iteritems(): 
@@ -209,4 +212,10 @@ if __name__ == '__main__':
                 repl = str(eval(m.group(1)))
                 s = expression_re.sub(repl, s, 1)
 
-            print s
+            lines.append(s)
+
+        if lines:
+            print options.record_separator.join(lines)
+
+    else: 
+        parser.error("invalid command")
