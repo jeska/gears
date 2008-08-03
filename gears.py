@@ -159,6 +159,8 @@ if __name__ == '__main__':
 
             filters[key] = f
 
+        expression_re = re.compile(r'@\{([^}]+)\}')
+
         for t in g.torrents.itervalues():
             try:
                 for k, filter in filters.iteritems(): 
@@ -170,7 +172,15 @@ if __name__ == '__main__':
             except FilterFalseException:
                 continue
 
+            # generate output from torrent info dict
             try: 
-                print options.output_format % t
+                s = options.output_format % t
             except KeyError:
                 parser.error("invalid output format")
+
+            # evaluate any expressions in the output (@{...})
+            for m in expression_re.finditer(s):
+                repl = str(eval(m.group(1)))
+                s = expression_re.sub(repl, s, 1)
+
+            print s
