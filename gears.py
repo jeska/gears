@@ -4,6 +4,7 @@ import fnmatch
 import os
 import re
 import socket
+from decimal import Decimal
 from optparse import OptionParser
 
 from bencode import bdecode, bencode
@@ -74,9 +75,15 @@ class Gears:
             # use internal transmission id as the dictionary key
             k = t['id']
 
-            # merge the status and info dictionaries together to create the
-            # definitive torrent info dict
+            # merge the status and info dictionaries together to lump all the
+            # torrent's details together
             t.update(status[i])
+
+            # add some useful keys
+            ratio = Decimal(t['upload-total']) / Decimal(t['size'])
+            t['ratio'] = ratio.quantize(Decimal('0.01'))
+
+            # add the torrent to the dictionary
             torrents[k] = t
 
             # reverse mapping
@@ -132,30 +139,46 @@ if __name__ == '__main__':
 
             key, operator, value = m.groups()
 
+            # The "lambda v, value=value: ..." uglyness is needed so that the
+            # current value of "value" is used as the filter value. If we
+            # didn't have this, "value", when actually executing the filters
+            # below, would always be the last filter value in the argument
+            # string.
+            #
+            # To elaborate, if our filters were "state=see* ratio>0.5",
+            # without the ugly hack above, "value = 0.5" for all executions
+            # regardless of filter function. This breaks things and isn't
+            # correct. The behavior we want is for "value" to be different for
+            # each filter function, and that's the behavior we try to have by
+            # having the "lambda v, value=value: ..." uglyness.
+
             # get the proper filtering function
             if operator == '=':
                 # if there are globbing metacharaters, glob-match
                 if re.search('[*?[]', value):
-                    f = lambda v: fnmatch.fnmatch(v, value) 
+                    f = lambda v, value=value: fnmatch.fnmatch(v, value) 
                 # otherwise, perform a strict equality match
                 else:
-                    f = lambda v: v == value
+                    f = lambda v, value=value: v == value
             elif operator == '~':
-                f = lambda v: re.search(value, v)
+                f = lambda v, value=value: re.search(value, v)
             elif operator == '>':
                 try:
                     value = float(value)
                 except ValueError:
                     parser.error("invalid filter value")
 
-                f = lambda v: float(v) > value
+                f = lambda v, value=value: float(v) > value
             elif operator == '<':
                 try:
                     value = float(value)
                 except ValueError:
                     parser.error("invalid filter value")
 
-                f = lambda v: float(v) < value
+                f = lambda v, value=value: float(v) < value
+
+#            if negation:
+#                f = lambda v: not f(v)
 
             filters[key] = f
 
