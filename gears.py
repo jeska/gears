@@ -121,6 +121,7 @@ if __name__ == '__main__':
         for arg in args[1:]:
             regex = r'''
                 ([A-Za-z-]+) # key
+                (!)?         # negation of immediately following operator
                 ([=~<>])     # operator
                              #     = equality (if "*" and "?" are in the
                              #         value, switch to globbing mode)
@@ -137,7 +138,7 @@ if __name__ == '__main__':
                 arg = "name=%s" % arg
                 m = re.compile(regex, re.X).search(arg)
 
-            key, operator, value = m.groups()
+            key, negation, operator, value = m.groups()
 
             # The "lambda v, value=value: ..." uglyness is needed so that the
             # current value of "value" is used as the filter value. If we
@@ -177,8 +178,10 @@ if __name__ == '__main__':
 
                 f = lambda v, value=value: float(v) < value
 
-#            if negation:
-#                f = lambda v: not f(v)
+            if negation is not None:
+                # "f=f" uglyness is so that we use the current value of "f"
+                # instead of causing, um, infinite recursion
+                f = lambda v, f=f: not f(v)
 
             filters[key] = f
 
