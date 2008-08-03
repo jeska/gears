@@ -105,22 +105,31 @@ class Gears:
         if isinstance(query, basestring):
             query = query.split()
 
+        flags_re = r'''
+            (?<!\\)           # don't match if preceeded with a backslash
+            /                 # flags follow a forward slash
+            ([ilmsuxILMSUX]+) # group the flags
+            \Z                # end of string
+        '''
+        flags_re = re.compile(flags_re, re.X)
+
+        filter_re = r'''
+            ([A-Za-z-]+) # key
+            (!)?         # negation of immediately following operator
+            ([=~<>])     # operator
+                            #     = equality (if "*" and "?" are in the
+                            #         value, switch to globbing mode)
+                            #     ~ regex
+                            #     < less than
+                            #     > greater than
+            ([^ ]+)      # value
+        '''
+        filter_re = re.compile(filter_re, re.X)
+
         torrents = []
         filters = {}
         for arg in query:
-            regex = r'''
-                ([A-Za-z-]+) # key
-                (!)?         # negation of immediately following operator
-                ([=~<>])     # operator
-                             #     = equality (if "*" and "?" are in the
-                             #         value, switch to globbing mode)
-                             #     ~ regex
-                             #     < less than
-                             #     > greater than
-                ([^ ]+)      # value
-            '''
-
-            m = re.compile(regex, re.X).search(arg)
+            m = filter_re.search(arg)
 
             # match the name by default
             while not m:
@@ -151,7 +160,29 @@ class Gears:
                 else:
                     f = lambda v, value=value: v == value
             elif operator == '~':
-                f = lambda v, value=value: re.search(value, v)
+                # if there are regex flags at the end of the pattern, compile
+                # them into the regex
+                m = flags_re.search(value)
+                if m:
+                    flags_str = m.group(1)
+                    for f in flags_str:
+                        # get the actual re.[ilmsux] value for the flag
+                        f = eval("re.%s" % f.upper())
+
+                        # add it to the flags
+                        try:
+                            flags = flags | f
+                        except UnboundLocalError:
+                            flags = f
+
+                    # remove the flags to get the actual pattern
+                    value = flags_re.sub('', value)
+                try:
+                    regex = re.compile(value, flags)
+                except UnboundLocalError:
+                    regex = re.compile(value)
+
+                f = lambda v, regex=regex: regex.search(v)
             elif operator == '>':
                 try:
                     value = float(value)
