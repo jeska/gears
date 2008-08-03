@@ -12,6 +12,9 @@ from bencode import bdecode, bencode
 socket_path = "%s/.transmission/daemon/socket" % os.environ['HOME']
 
 class Gears:
+    class QueryException(Exception):
+        pass
+
     def __init__(self):
         self.connect()
 
@@ -94,33 +97,17 @@ class Gears:
         self.torrents = torrents
         self.id_of = id_of
 
-class FilterFalseException(Exception):
-    pass
+    def parse_query(self, query):
+        class FilterFalseException(Exception):
+            pass
 
-if __name__ == '__main__':
-    parser = OptionParser(usage="usage: %prog [options] command")
-    parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
-    parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
-    parser.add_option("-o", "--output_format", dest="output_format", default="%name")
-    parser.add_option("--rs", dest="record_separator", default="\n")
+        # make sure query is an array
+        if isinstance(query, basestring):
+            query = query.split()
 
-    (options, args) = parser.parse_args()
-
-    # make the output format into a printf-friendly string
-    options.output_format = re.sub(r'%([A-Za-z-]+)', r'%(\1)s', options.output_format)
-
-    try:
-        cmd = args[0]
-    except IndexError:
-        parser.error("incorrect number of arguments")
-
-    g = Gears()
-
-    if cmd == 'list':
-        g.get_torrent_info()
-
+        torrents = []
         filters = {}
-        for arg in args[1:]:
+        for arg in query:
             regex = r'''
                 ([A-Za-z-]+) # key
                 (!)?         # negation of immediately following operator
@@ -187,9 +174,7 @@ if __name__ == '__main__':
 
             filters[key] = f
 
-        expression_re = re.compile(r'@\{([^}]+)\}')
-
-        lines = []
+        self.get_torrent_info()
         for t in g.torrents.itervalues():
             try:
                 for k, filter in filters.iteritems(): 
@@ -197,10 +182,43 @@ if __name__ == '__main__':
                         if not filter(t[k]):
                             raise FilterFalseException
                     except KeyError:
-                        parser.error("invalid filter key")
+                        raise self.QueryException("invalid filter key")
             except FilterFalseException:
                 continue
+            else:
+                torrents.append(t)
 
+        return torrents
+
+if __name__ == '__main__':
+    parser = OptionParser(usage="usage: %prog [options] command [args]")
+    parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
+    parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
+    parser.add_option("-o", "--output_format", dest="output_format", default="%name")
+    parser.add_option("--rs", dest="record_separator", default="\n")
+
+    (options, args) = parser.parse_args()
+
+    # make the output format into a printf-friendly string
+    options.output_format = re.sub(r'%([A-Za-z-]+)', r'%(\1)s', options.output_format)
+
+    try:
+        cmd = args[0]
+    except IndexError:
+        parser.error("incorrect number of arguments")
+
+    g = Gears()
+
+    if cmd == 'list':
+        try:
+            torrents = g.parse_query(args[1:])
+        except g.QueryException, e:
+            parser.error(str(e))
+
+        expression_re = re.compile(r'@\{([^}]+)\}')
+
+        lines = []
+        for t in torrents:
             # generate output from torrent info dict
             try: 
                 s = options.output_format % t
