@@ -98,6 +98,9 @@ class Gears:
     def remove_torrent(self, t):
         return self.send_message(['remove', [t['id']]], read = False)
 
+    def add_torrent(self, f):
+        return self.send_message(['addfiles', [f]], read = False)
+
     def parse_query(self, query):
         class FilterFalseException(Exception):
             pass
@@ -252,7 +255,7 @@ if __name__ == '__main__':
 
     try:
         cmd = args[0]
-        query = args[1:]
+        args = args[1:]
     except IndexError:
         parser.error("incorrect number of arguments")
 
@@ -260,12 +263,12 @@ if __name__ == '__main__':
 
     if cmd == 'list':
         # if the user doesn't give a query, grab everything
-        if not query:
+        if not args:
             g.get_torrent_info()
             torrents = g.torrents
         else:
             try:
-                torrents = g.parse_query(query)
+                torrents = g.parse_query(args)
             except g.QueryException, e:
                 parser.error(str(e))
 
@@ -290,11 +293,11 @@ if __name__ == '__main__':
             print options.record_separator.join(lines)
 
     elif cmd == 'remove':
-        if not query:
+        if not args:
             parser.error("invalid query")
 
         try:
-            torrents = g.parse_query(args[1:])
+            torrents = g.parse_query(args)
         except g.QueryException, e:
             parser.error(str(e))
 
@@ -304,6 +307,17 @@ if __name__ == '__main__':
 
             if not options.dry_run:
                 g.remove_torrent(t)
+
+    elif cmd == 'add':
+        if not args:
+            parser.error("invalid files to add")
+
+        for f in args:
+            if options.verbose:
+                print "adding: %s" % f
+
+            if not options.dry_run:
+                g.add_torrent(f)
 
     else: 
         parser.error("invalid command")
