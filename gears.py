@@ -230,16 +230,25 @@ class Gears:
         return torrent_matches
 
 if __name__ == '__main__':
+    def dry_run_callback(option, opt, value, parser):
+        parser.values.dry_run = True
+        parser.values.verbose = 1
+
     parser = OptionParser(usage="usage: %prog [options] command [args]")
     parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
     parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
+    parser.add_option("-n", "--dry-run", action="callback", callback=dry_run_callback, dest="dry_run", default=False)
     parser.add_option("-o", "--output_format", dest="output_format", default="%name")
     parser.add_option("--rs", dest="record_separator", default="\n")
+    parser.add_option("-v", "--verbose", action="count", dest="verbose", default=0)
 
     (options, args) = parser.parse_args()
 
     # make the output format into a printf-friendly string
     options.output_format = re.sub(r'%([A-Za-z-]+)', r'%(\1)s', options.output_format)
+
+    if options.dry_run:
+        print "dry run: no changes will be made"
 
     try:
         cmd = args[0]
@@ -290,7 +299,11 @@ if __name__ == '__main__':
             parser.error(str(e))
 
         for t in torrents:
-            g.remove_torrent(t)
+            if options.verbose:
+                print "removing: %s" % t['name']
+
+            if not options.dry_run:
+                g.remove_torrent(t)
 
     else: 
         parser.error("invalid command")
