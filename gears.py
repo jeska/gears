@@ -45,7 +45,7 @@ class Gears:
         if read:
             return self.read_message()
         else:
-            return True
+            return
 
     def read_message(self):
         socket = self.socket
@@ -56,6 +56,7 @@ class Gears:
         return bdecode(data)
 
     def get_torrent_info(self):
+        # if self.torrents already exists, assume it's populated and return
         try:
             self.torrents
         except AttributeError:
@@ -71,8 +72,7 @@ class Gears:
             'download-speed', 'download-total', 'error', 'error-message', 'eta',
             'state', 'upload-speed', 'upload-total']])[1]
 
-        torrents = {}
-        id_of = {}
+        torrents = []
         i = 0
         for t in info:
             # use internal transmission id as the dictionary key
@@ -86,25 +86,30 @@ class Gears:
             ratio = Decimal(t['upload-total']) / Decimal(t['size'])
             t['ratio'] = ratio.quantize(Decimal('0.01'))
 
-            # add the torrent to the dictionary
-            torrents[k] = t
-
-            # reverse mapping
-            id_of[t['name']] = k
+            # add the torrent 
+            torrents.append(t)
 
             i += 1
 
         self.torrents = torrents
-        self.id_of = id_of
+
+        return
+
+    def remove_torrent(self, t):
+        return self.send_message(['remove', [t['id']]], read = False)
 
     def parse_query(self, query):
         class FilterFalseException(Exception):
             pass
 
+        if not query:
+            return {}
+
         # make sure query is an array
         if isinstance(query, basestring):
             query = query.split()
 
+        # regex for regex flags in regex filters (horrible comment...)
         flags_re = r'''
             (?<!\\)           # don't match if preceeded with a backslash
             /                 # flags follow a forward slash
@@ -113,6 +118,7 @@ class Gears:
         '''
         flags_re = re.compile(flags_re, re.X)
 
+        # regex for the filters themselves
         filter_re = r'''
             ([A-Za-z-]+) # key
             (!)?         # negation of immediately following operator
@@ -126,7 +132,7 @@ class Gears:
         '''
         filter_re = re.compile(filter_re, re.X)
 
-        torrents = []
+        torrent_matches = []
         filters = {}
         for arg in query:
             m = filter_re.search(arg)
@@ -134,7 +140,7 @@ class Gears:
             # match the name by default
             while not m:
                 arg = "name=%s" % arg
-                m = re.compile(regex, re.X).search(arg)
+                m = re.compile(filter_re, re.X).search(arg)
 
             key, negation, operator, value = m.groups()
 
@@ -197,6 +203,8 @@ class Gears:
                     parser.error("invalid filter value")
 
                 f = lambda v, value=value: float(v) < value
+            else:
+                raise QueryException("invalid query")
 
             if negation is not None:
                 # "f=f" uglyness is so that we use the current value of "f"
@@ -206,7 +214,7 @@ class Gears:
             filters[key] = f
 
         self.get_torrent_info()
-        for t in g.torrents.itervalues():
+        for t in self.torrents:
             try:
                 for k, filter in filters.iteritems(): 
                     try:
@@ -217,9 +225,9 @@ class Gears:
             except FilterFalseException:
                 continue
             else:
-                torrents.append(t)
+                torrent_matches.append(t)
 
-        return torrents
+        return torrent_matches
 
 if __name__ == '__main__':
     parser = OptionParser(usage="usage: %prog [options] command [args]")
@@ -235,16 +243,22 @@ if __name__ == '__main__':
 
     try:
         cmd = args[0]
+        query = args[1:]
     except IndexError:
         parser.error("incorrect number of arguments")
 
     g = Gears()
 
     if cmd == 'list':
-        try:
-            torrents = g.parse_query(args[1:])
-        except g.QueryException, e:
-            parser.error(str(e))
+        # if the user doesn't give a query, grab everything
+        if not query:
+            g.get_torrent_info()
+            torrents = g.torrents
+        else:
+            try:
+                torrents = g.parse_query(query)
+            except g.QueryException, e:
+                parser.error(str(e))
 
         expression_re = re.compile(r'@\{([^}]+)\}')
 
@@ -265,6 +279,18 @@ if __name__ == '__main__':
 
         if lines:
             print options.record_separator.join(lines)
+
+    elif cmd == 'remove':
+        if not query:
+            parser.error("invalid query")
+
+        try:
+            torrents = g.parse_query(args[1:])
+        except g.QueryException, e:
+            parser.error(str(e))
+
+        for t in torrents:
+            g.remove_torrent(t)
 
     else: 
         parser.error("invalid command")
