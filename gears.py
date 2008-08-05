@@ -2,6 +2,7 @@
 
 import fnmatch
 import os
+import os.path
 import re
 import socket
 from decimal import Decimal
@@ -313,6 +314,8 @@ if __name__ == '__main__':
             parser.error("invalid files to add")
 
         for f in args:
+            f = os.path.abspath(f)
+
             if options.verbose:
                 print "adding: %s" % f
 
