@@ -1,106 +1,163 @@
 #!/usr/bin/python
 
 import fnmatch
+import httplib
 import os
 import os.path
 import re
-import socket
+import simplejson
+import urllib
 from decimal import Decimal
 from optparse import OptionParser
 
 from bencode import bdecode, bencode
 
-socket_path = "%s/.transmission/daemon/socket" % os.environ['HOME']
+url = "/transmission/rpc"
+host = "localhost"
+port = "9091"
 
 class Gears:
+    # taken from libtransmission/transmission.h
+    tr_status = {
+        1 << 0: 'waiting to check',
+        1 << 1: 'checking',
+        1 << 2: 'downloading',
+        1 << 3: 'seeding',
+        1 << 4: 'stopped',
+    }
+
+    class MethodException(Exception):
+        pass
+
     class QueryException(Exception):
         pass
 
-    def __init__(self):
+    def __init__(self, **kw):
         self.connect()
+        self.torrents = {}
+
+        self.debug_level = kw.get('debug_level', 0)
 
     def connect(self):
-        s = socket.socket(socket.AF_UNIX)
-        s.connect(socket_path)
+        self.h = httplib.HTTPConnection(host, port, True)
+        self.h.connect()
 
-        self.socket = s
+    def send_message(self, method, **method_arguments):
+        # generate transmission message
+        d = dict(
+            method = method,
+            arguments = method_arguments,
+        )
 
-        # send protocol handshake
-        handshake = dict(version = dict(label = 'gears', max = 2, min = 1))
-        self.send_message(handshake)
+        # convert to JSON
+        message = simplejson.dumps(d)
+        
+        headers = {
+            "Accept": "*/*",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
 
-    def send_message(self, message, **kw):
-        socket = self.socket
+        if self.debug_level:
+            print ">> %s" % message
 
-        read = kw.get('read', True)
+        self.h.request("POST", url, message, headers)
 
-        cmd = bencode(message)
+        return self.read_message()
 
-        # the first eight bytes of a message is the length of the entire message
-        # in hex zero-padded to fit the whole eight bytes
-        length = str(hex(len(cmd)))[2:].zfill(8)
-        message = length + cmd
-
-        socket.send(message)
-
-        if read:
-            return self.read_message()
-        else:
-            return
 
     def read_message(self):
-        socket = self.socket
+        r = self.h.getresponse()
 
-        # the first eight bytes is the length of the message
-        length = int(socket.recv(8), 16)
-        data = socket.recv(length)
-        return bdecode(data)
+#        if debug >= 2:
+#            print "<< %s" % r.read()
+
+        return r
 
     def get_torrent_info(self):
-        # if self.torrents already exists, assume it's populated and return
-        try:
-            self.torrents
-        except AttributeError:
-            pass
-        else:
+        # if self.torrents is already populated, return
+        if len(self.torrents) > 0:
             return
 
-        socket = self.socket
+        response = self.send_message("torrent-get", fields = ['id', 'name',
+            'error', 'errorString', 'eta', 'rateDownload', 'rateUpload',
+            'status', 'sizeWhenDone', 'totalSize', 'uploadRatio',
+            'downloadEver', 'uploadEver' ],
+        )
 
-        info = self.send_message(['get-info-all', ['hash', 'name', 'size']])[1]
+        # parse JSON 
+        result = response.read()
+        result = simplejson.loads(result)
 
-        status = self.send_message(['get-status-all', ['completed',
-            'download-speed', 'download-total', 'error', 'error-message', 'eta',
-            'state', 'upload-speed', 'upload-total']])[1]
+        result = result['arguments']['torrents']
 
         torrents = []
-        i = 0
-        for t in info:
-            # use internal transmission id as the dictionary key
-            k = t['id']
-
-            # merge the status and info dictionaries together to lump all the
-            # torrent's details together
-            t.update(status[i])
-
+        for t in result:
             # add some useful keys
-            ratio = Decimal(t['upload-total']) / Decimal(t['size'])
-            t['ratio'] = ratio.quantize(Decimal('0.01'))
+            t['status-actual'] = t['status']
+            t['status'] = self.tr_status[t['status']]
 
             # add the torrent 
             torrents.append(t)
-
-            i += 1
 
         self.torrents = torrents
 
         return
 
-    def remove_torrent(self, t):
-        return self.send_message(['remove', [t['id']]], read = False)
+    def do(self, method, torrents):
+        ids = [ t['id'] for t in torrents ]
 
-    def add_torrent(self, f):
-        return self.send_message(['addfiles', [f]], read = False)
+        response = self.send_message(method, ids = ids)
+
+        response = response.read()
+        response = simplejson.loads(response)
+        if response['result'] != 'success':
+            raise self.MethodException(response['result'])
+
+        return True
+
+    def add_torrent(self, torrent_file):
+        response = self.send_message("torrent-add", filename = torrent_file)
+
+        response = response.read()
+        response = simplejson.loads(response)
+        if response['result'] != 'success':
+            # FIXME
+            raise self.MethodException("Could not add torrent '%s': %s" % \
+                (torrent_file, response['result']))
+
+        return True
+
+    def remove_torrents(self, torrents):
+        try:
+            self.do("torrent-remove", torrents)
+        except self.MethodException, e:
+            raise self.MethodException("Could not remove torrents: %s", e)
+
+        return True
+
+    def start_torrents(self, torrents):
+        try:
+            self.do("torrent-start", torrents)
+        except self.MethodException, e:
+            raise self.MethodException("Could not start torrents: %s", e)
+
+        return True
+
+    def stop_torrents(self, torrents):
+        try:
+            self.do("torrent-stop", torrents)
+        except self.MethodException, e:
+            raise self.MethodException("Could not stop torrents: %s", e)
+
+        return True
+
+    def verify_torrents(self, torrents):
+        try:
+            self.do("torrent-verify", torrents)
+        except self.MethodException, e:
+            raise self.MethodException("Could not verify torrents: %s", e)
+
+        return True
 
     def parse_query(self, query):
         class FilterFalseException(Exception):
@@ -115,7 +172,7 @@ class Gears:
 
         # regex for regex flags in regex filters (horrible comment...)
         flags_re = r'''
-            (?<!\\)           # don't match if preceeded with a backslash
+            (?<!\\)           # don't match if preceeded by a backslash
             /                 # flags follow a forward slash
             ([ilmsuxILMSUX]+) # group the flags
             \Z                # end of string
@@ -236,15 +293,21 @@ class Gears:
 if __name__ == '__main__':
     def dry_run_callback(option, opt, value, parser):
         parser.values.dry_run = True
-        parser.values.verbose = 1
+        parser.values.debug_level = 1
 
-    parser = OptionParser(usage="usage: %prog [options] command [args]")
-    parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
-    parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
-    parser.add_option("-n", "--dry-run", action="callback", callback=dry_run_callback, dest="dry_run", default=False)
-    parser.add_option("-o", "--output_format", dest="output_format", default="%name")
-    parser.add_option("--rs", dest="record_separator", default="\n")
-    parser.add_option("-v", "--verbose", action="count", dest="verbose", default=0)
+    parser = OptionParser(usage = "usage: %prog [options] command [args]")
+    parser.add_option("-0", action = "store_const", const = "\0", 
+                      dest = "record_separator")
+    parser.add_option("-H", "--hashes", action = "store_const", 
+                      const = "%hash", dest = "output_format")
+    parser.add_option("-n", "--dry-run", action = "callback", 
+                      callback = dry_run_callback, dest = "dry_run",
+                      default = False)
+    parser.add_option("-o", "--output_format", dest = "output_format", 
+                      default = "%name")
+    parser.add_option("--rs", dest = "record_separator", default = "\n")
+    parser.add_option("-v", "--verbose", action = "count", 
+                      dest = "debug_level", default = 0)
 
     (options, args) = parser.parse_args()
 
@@ -260,7 +323,7 @@ if __name__ == '__main__':
     except IndexError:
         parser.error("incorrect number of arguments")
 
-    g = Gears()
+    g = Gears(debug_level = options.debug_level)
 
     if cmd == 'list':
         # if the user doesn't give a query, grab everything
@@ -293,7 +356,7 @@ if __name__ == '__main__':
         if lines:
             print options.record_separator.join(lines)
 
-    elif cmd == 'remove':
+    elif cmd == 'remove' or cmd == 'start' or cmd == 'stop' or cmd == 'verify':
         if not args:
             parser.error("invalid query")
 
@@ -302,21 +365,36 @@ if __name__ == '__main__':
         except g.QueryException, e:
             parser.error(str(e))
 
-        for t in torrents:
-            if options.verbose:
-                print "removing: %s" % t['name']
+        if len(torrents) == 0:
+            # FIXME
+            raise Exception("No matching torrents")
 
-            if not options.dry_run:
-                g.remove_torrent(t)
+        # method mappings
+        d = dict(
+            remove = g.remove_torrents,
+            start = g.start_torrents,
+            stop = g.stop_torrents,
+            verify = g.verify_torrents,
+        )
+
+        if options.debug_level:
+            s = '; '.join([ t['name'] for t in torrents])
+            print "%s: %s" % (cmd, s)
+
+        if not options.dry_run:
+            d[cmd](torrents)
 
     elif cmd == 'add':
         if not args:
             parser.error("invalid files to add")
 
         for f in args:
+            if not os.path.exists(f):
+                parser.error("torrent '%s' does not exist" % f)
+        
             f = os.path.abspath(f)
-
-            if options.verbose:
+            
+            if options.debug_level:
                 print "adding: %s" % f
 
             if not options.dry_run:
