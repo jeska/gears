@@ -172,23 +172,23 @@ class Gears:
 
         # regex for regex flags in regex filters (horrible comment...)
         flags_re = r'''
-            (?<!\\)           # don't match if preceeded by a backslash
-            /                 # flags follow a forward slash
-            ([ilmsuxILMSUX]+) # group the flags
-            \Z                # end of string
+            (?<!\\)     # don't match if preceeded by a backslash
+            /           # flags follow a forward slash
+            ([ilmsux]+) # group the flags
+            \Z          # end of string
         '''
-        flags_re = re.compile(flags_re, re.X)
+        flags_re = re.compile(flags_re, re.X | re.I)
 
         # regex for the filters themselves
         filter_re = r'''
             ([A-Za-z-]+) # key
             (!)?         # negation of immediately following operator
             ([=~<>])     # operator
-                            #     = equality (if "*" and "?" are in the
-                            #         value, switch to globbing mode)
-                            #     ~ regex
-                            #     < less than
-                            #     > greater than
+                         #     = equality (if "*" and "?" are in the
+                         #         value, switch to globbing mode)
+                         #     ~ regex
+                         #     < less than
+                         #     > greater than
             ([^ ]+)      # value
         '''
         filter_re = re.compile(filter_re, re.X)
@@ -233,7 +233,7 @@ class Gears:
                 if m:
                     flags_str = m.group(1)
                     for f in flags_str:
-                        # get the actual re.[ilmsux] value for the flag
+                        # get the actual re.[ILMSUX] value for the flag
                         f = eval("re.%s" % f.upper())
 
                         # add it to the flags
@@ -275,6 +275,8 @@ class Gears:
             filters[key] = f
 
         self.get_torrent_info()
+
+        # run each filter against each torrent
         for t in self.torrents:
             try:
                 for k, filter in filters.iteritems(): 
