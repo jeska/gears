@@ -189,7 +189,8 @@ class Gears:
                          #     ~ regex
                          #     < less than
                          #     > greater than
-            ([^ ]+)      # value
+            (.+)         # value
+            \Z           # end of string
         '''
         filter_re = re.compile(filter_re, re.X)
 
