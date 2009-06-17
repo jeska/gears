@@ -43,6 +43,15 @@ class Gears:
         self.h.connect()
 
     def send_message(self, method, **method_arguments):
+        # FIXME: separate sending transmission message from sending HTTP
+        # message
+        try:
+            session_id = method_arguments["session_id"]
+            del method_arguments["session_id"]
+        except KeyError:
+            # FIXME: cache the session id in a temporary file somewhere
+            session_id = ""
+
         # generate transmission message
         d = dict(
             method = method,
@@ -55,6 +64,7 @@ class Gears:
         headers = {
             "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded",
+            "X-Transmission-Session-Id": session_id,
         }
 
         if self.debug_level:
@@ -62,16 +72,20 @@ class Gears:
 
         self.h.request("POST", url, message, headers)
 
-        return self.read_message()
+        response = self.h.getresponse()
 
+        # if we have an invalid X-Transmission-Session-Id, parse the new one
+        # and then resend the message
+        if response.status == 409:
+            session_id = response.getheader("X-Transmission-Session-Id")
 
-    def read_message(self):
-        r = self.h.getresponse()
+            # throw away response to leave httplib in a usable state
+            response.read()
 
-#        if debug >= 2:
-#            print "<< %s" % r.read()
+            return self.send_message(method, session_id=session_id,
+                                     **method_arguments)
 
-        return r
+        return response
 
     def get_torrent_info(self):
         # if self.torrents is already populated, return
