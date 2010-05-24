@@ -87,6 +87,10 @@ class Gears:
             ratio = Decimal(t['upload-total']) / Decimal(t['size'])
             t['ratio'] = ratio.quantize(Decimal('0.01'))
 
+            for k in ('download-speed', 'upload-speed', 'size'):
+                new_key = "%s-pretty" % k
+                t[new_key] = self.pretty_size(t[k])
+
             # add the torrent 
             torrents.append(t)
 
@@ -218,6 +222,10 @@ class Gears:
             filters[key] = f
 
         self.get_torrent_info()
+
+        # Go through each of the torrents and run each filter against it. If a
+        # filter returns False, then the torrent doesn't match the filter and
+        # it is excluded from the matches.
         for t in self.torrents:
             try:
                 for k, filter in filters.iteritems(): 
@@ -233,23 +241,40 @@ class Gears:
 
         return torrent_matches
 
+    def pretty_size(self, size, unit='B'):
+        block_size = 1024
+        prefixes = list(' KMGTP')
+
+        size = Decimal(str(size))
+
+        while prefixes and size > block_size:
+            prefixes.pop(0)
+            size /= block_size
+
+        prefix = prefixes.pop(0).rstrip()
+        size = size.quantize(Decimal('0.01'))
+
+        return "%s %s%s" % (size, prefix, unit)
+
 if __name__ == '__main__':
     def dry_run_callback(option, opt, value, parser):
         parser.values.dry_run = True
         parser.values.verbose = 1
 
+    default_output_format = '%name'
+
     parser = OptionParser(usage="usage: %prog [options] command [args]")
     parser.add_option("-0", action="store_const", const="\0", dest="record_separator")
     parser.add_option("-H", "--hashes", action="store_const", const="%hash", dest="output_format")
     parser.add_option("-n", "--dry-run", action="callback", callback=dry_run_callback, dest="dry_run", default=False)
-    parser.add_option("-o", "--output_format", dest="output_format", default="%name")
+    parser.add_option("-o", "--output_format", dest="output_format", default=default_output_format)
     parser.add_option("--rs", dest="record_separator", default="\n")
     parser.add_option("-v", "--verbose", action="count", dest="verbose", default=0)
 
     (options, args) = parser.parse_args()
 
     # make the output format into a printf-friendly string
-    options.output_format = re.sub(r'%([A-Za-z-]+)', r'%(\1)s', options.output_format)
+    options.output_format = re.sub(r'(?<!%)%([A-Za-z-]+)', r'%(\1)s', options.output_format)
 
     if options.dry_run:
         print "dry run: no changes will be made"
@@ -274,6 +299,7 @@ if __name__ == '__main__':
                 parser.error(str(e))
 
         expression_re = re.compile(r'@\{([^}]+)\}')
+        statement_re = re.compile(r'\$\{([^}]+)\}', re.M)
 
         lines = []
         for t in torrents:
@@ -283,10 +309,15 @@ if __name__ == '__main__':
             except KeyError:
                 parser.error("invalid output format")
 
-            # evaluate any expressions in the output (@{...})
+            # evaluate any expressions in the output format (@{...})
             for m in expression_re.finditer(s):
                 repl = str(eval(m.group(1)))
                 s = expression_re.sub(repl, s, 1)
+
+            # execute any statements in the output format (${...})
+            for m in statement_re.finditer(s):
+                exec m.group(1)
+                s = statement_re.sub(repl, s, 1)
 
             lines.append(s)
 
