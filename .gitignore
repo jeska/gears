@@ -1,0 +1,3 @@
+*.pyc
+.*sw?
+bencode.py
